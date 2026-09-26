@@ -29,23 +29,30 @@ FEATURES = [
     "condition",
 ]
 
-
 @app.route("/", methods=["POST"])
 def index():
     """API function"""
 
-    args = request.json
-    filt_args = {key: [int(args[key])] for key in FEATURES}
+    args = request.get_json(silent=True)
+    if not isinstance(args, dict):
+        return jsonify({"error": "Se esperaba un cuerpo JSON"}), 400
+
+    missing = [key for key in FEATURES if key not in args]
+    if missing:
+        return jsonify({"error": "Faltan campos", "fields": missing}), 400
+
+    try:
+        filt_args = {key: [int(args[key])] for key in FEATURES}
+    except (TypeError, ValueError):
+        return jsonify({"error": "Todos los campos deben ser valores numéricos"}), 400
+
     df = pd.DataFrame.from_dict(filt_args)
 
     with open("PRE_07_deployment/submission/house_predictor.pkl", "rb") as file:
         loaded_model = pickle.load(file)
 
     prediction = loaded_model.predict(df)
-
     return str(prediction[0][0])
-
 
 if __name__ == "__main__":
     app.run(debug=True)
-    

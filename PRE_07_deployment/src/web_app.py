@@ -1,58 +1,67 @@
 import pickle
+from pathlib import Path
 
 import pandas as pd  # type: ignore
-from flask import Flask, render_template, request  # type: ignore
+from flask import Flask, jsonify, render_template, request  # type: ignore
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "you-will-never-guess"
 
-FOLDER = "PRE_07_deployment"
+FEATURES = [
+    "bedrooms",
+    "bathrooms",
+    "sqft_living",
+    "sqft_lot",
+    "floors",
+    "waterfront",
+    "condition",
+]
 
 
 @app.route("/", methods=["GET", "POST"])
-@app.route("/index", methods=("GET", "POST"))
+@app.route("/index", methods=["GET", "POST"])
 def index():
+    if request.method == "GET":
+        return render_template("index.html", prediction="")
 
-    if request.method == "POST":
+    data = request.get_json(silent=True)
+    if data is None:
+        data = request.form
 
-        user_values = {}
+    missing = [key for key in FEATURES if key not in data]
+    if missing:
+        return f"Faltan campos: {', '.join(missing)}", 400
 
-        # Lee los valores de las cajas de texto de la interfaz
-        user_values["bedrooms"] = float(request.form["bedrooms"])
-        user_values["bathrooms"] = float(request.form["bathrooms"])
-        user_values["sqft_living"] = float(request.form["sqft_living"])
-        user_values["sqft_lot"] = float(request.form["sqft_lot"])
-        user_values["floors"] = float(request.form["floors"])
+    try:
+        values = {
+            key: float(data[key])
+            for key in FEATURES
+            if key not in ("waterfront", "condition")
+        }
+        values["waterfront"] = int(
+            str(data["waterfront"]).lower() in ("yes", "1", "true")
+        )
+        values["condition"] = int(data["condition"])
 
-        if request.form.get("waterfront") == "Yes":
-            user_values["waterfront"] = 0
-        else:
-            user_values["waterfront"] = 1
+        # Mantiene el mismo orden de características que espera el modelo.
+        df = pd.DataFrame([[values[key] for key in FEATURES]], columns=FEATURES)
+    except (TypeError, ValueError):
+        return "Los valores enviados no son válidos", 400
 
-        #
-        # Valore entre 1 y 5
-        if request.form.get("condition") == "1":
-            user_values["condition"] = 1
-        elif request.form.get("condition") == "2":
-            user_values["condition"] = 2
-        elif request.form.get("condition") == "3":
-            user_values["condition"] = 3
-        elif request.form.get("condition") == "4":
-            user_values["condition"] = 4
-        else:
-            user_values["condition"] = 5
+    model_path = (
+        Path(__file__).resolve().parents[1]
+        / "submission"
+        / "house_predictor.pkl"
+    )
+    with model_path.open("rb") as file:
+        model = pickle.load(file)
 
-        df = pd.DataFrame.from_dict(user_values, orient="index").T
+    price = float(model.predict(df)[0])
 
-        with open(f"{FOLDER}/submission/house_predictor.pkl", "rb") as file:
-            loaded_model = pickle.load(file)
+    if request.is_json:
+        return jsonify({"prediction": price})
 
-        prediction = round(loaded_model.predict(df)[0][0], 2)
-
-    else:
-        prediction = None
-
-    return render_template("index.html", prediction=prediction)
+    return render_template("index.html", prediction=price)
 
 
 if __name__ == "__main__":
